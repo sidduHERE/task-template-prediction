@@ -46,12 +46,12 @@ async function setup() {
 
   //GET ROUND
 
-  // const round = await namespaceWrapper.getRound();
-  // console.log("ROUND", round);
+  const round = await namespaceWrapper.getRound();
+  console.log("ROUND", round);
 
   // Call to do the work for the task
 
-  //await coreLogic.task();
+  // await coreLogic.task(round);
 
   // Submission to K2 (Preferablly you should submit the cid received from IPFS)
 
@@ -63,7 +63,7 @@ async function setup() {
 
   // upload distribution list to K2
 
-  //await coreLogic.submitDistributionList(round - 2)
+  // await coreLogic.submitDistributionList(3);
 
   // Audit distribution list
 

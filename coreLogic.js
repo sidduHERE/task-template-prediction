@@ -1,10 +1,101 @@
 const { namespaceWrapper } = require('./namespaceWrapper');
 const crypto = require('crypto');
+const { TASK_ID, K2_NODE_URL } = require('./init');
+const { Connection, LAMPORTS_PER_SOL } = require('@_koi/web3.js');
+const fetchTransactions = require('./fetchTransactions');
+const fetchData = require('./fetchPrice');
+const { object } = require('joi');
 
 class CoreLogic {
+  stakePotAccount;
   async task() {
     // Write the logic to do the work required for submitting the values and optionally store the result in levelDB
+    const connection = new Connection(K2_NODE_URL);
+    const round = await namespaceWrapper.getRound();
+    let predictionPayouts = {};
+    let state = await namespaceWrapper.getTaskState();
+    this.stakePotAccount = state.stakePotAccount;
+    const currentTime = Math.floor(Date.now() / 1000);
+    const roundedTime = Math.floor(currentTime / 300) * 300;
+    console.log(roundedTime, 'roundedTime');
+    // TODO: change the arguments from +300 to -300 after testing.
+    let transactionResult =
+      await fetchTransactions(
+        state.stake_pot_account,
+        roundedTime - 300,
+        roundedTime,
+      );
+    const transactions = transactionResult[0];
+    const openInterestLong = transactionResult[1];
+    const openInterestShort = transactionResult[2];
+    let { openingPrice, closingPrice } = await fetchData(
+      roundedTime - 300,
+      roundedTime,
+    );
+    console.log(transactions, "when seen through core logic");
+    if(transactions == null || Object.keys(transactions).length == 0){
+      console.log("It went to null");
+      return;
+    }
+    if (openingPrice == null || closingPrice == null) {
+      console.log('No data found for this time period');
+    } else {
+      if (openingPrice > closingPrice) {
+        console.log(
+          'Opening price is greater than Closing price --> shorts won!!',
+        );
+        let profit_per_stake = openInterestLong / openInterestShort;
+        let stakers = Object.keys(transactions);
+        for (let i = 0; i < stakers.length; i++) {
+          let staker = stakers[i];
+          if (transactions[staker] < 0) {
+            let profit = -1 * transactions[staker] * (1 + profit_per_stake);
+            console.log('Staker: ', staker, 'Profit: ', profit);
+            predictionPayouts[staker] =
+              (predictionPayouts[staker] ? predictionPayouts[staker] : 0) +
+              profit;
+          }
+        }
+      } else if (closingPrice > openingPrice) {
+        console.log(
+          'Closing price is greater than Opening price --> longs won!!',
+        );
+        let profit_per_stake = openInterestShort / openInterestLong;
+        let stakers = Object.keys(transactions);
+        for (let i = 0; i < stakers.length; i++) {
+          let staker = stakers[i];
+          if (transactions[staker] > 0) {
+            let profit = transactions[staker] * (1 + profit_per_stake);
+            console.log('Staker: ', staker, 'Profit: ', profit);
+            predictionPayouts[staker] =
+              (predictionPayouts[staker] ? predictionPayouts[staker] : 0) +
+              profit;
+          }
+        }
+      } else if (closingPrice == openingPrice) {
+        console.log('Closing price is equal to Opening price --> no one won!!');
+        let stakers = Object.keys(transactions);
+        for (let i = 0; i < stakers.length; i++) {
+          let staker = stakers[i];
+          let stake = transactions[staker];
+          if (stake < 0) stake = -1 * stake;
+          console.log(
+            'Staker: ',
+            staker,
+            'Returning Amount (Initial Stake Amount): ',
+            stake,
+          );
+          predictionPayouts[staker] =
+            (predictionPayouts[staker] ? predictionPayouts[staker] : 0) + stake;
+        }
+      }
 
+      console.log('predictionPayouts', predictionPayouts);
+      await namespaceWrapper.storeSet(
+        'predictionPayouts_' + round,
+        predictionPayouts,
+      );
+    }
     // Below is just a sample of work that a task can do
 
     try {
@@ -16,10 +107,10 @@ class CoreLogic {
       if (cid) {
         await namespaceWrapper.storeSet('cid', cid); // store CID in levelDB
       }
-      return cid
+      return cid;
     } catch (err) {
       console.log('ERROR IN EXECUTING TASK', err);
-      return 'ERROR IN EXECUTING TASK' + err
+      return 'ERROR IN EXECUTING TASK' + err;
     }
   }
   async fetchSubmission() {
@@ -53,7 +144,7 @@ class CoreLogic {
       const submissions_audit_trigger =
         taskAccountDataJSON.submissions_audit_trigger[round];
       if (submissions == null) {
-        console.log(`No submisssions found in round ${round}`);
+        console.log('No submisssions found in N-2 round');
         return distributionList;
       } else {
         const keys = Object.keys(submissions);
@@ -120,8 +211,30 @@ class CoreLogic {
       for (let i = 0; i < distributionCandidates.length; i++) {
         distributionList[distributionCandidates[i]] = reward;
       }
-      console.log('Distribution List', distributionList);
+      console.log("before distribution list", distributionList);
+      // const data1 = JSON.parse(distributionList.toString());
+      // console.log('data1', data1);
+      const predictionList = await namespaceWrapper.storeGet('predictionPayouts_' + round);
+      console.log("prediction list", predictionList);
+      if(predictionList == null || Object.keys(predictionList).length === 0 ){
+        console.log("No prediction payouts found");
+        return distributionList;
+      }
+      const keys = Object.keys(predictionList);
+      for (let index = 0; index < keys.length; index++) {
+        distributionList[keys[index]] = predictionList[keys[index]] * LAMPORTS_PER_SOL + (distributionList[keys[index]] ? distributionList[keys[index]] : 0);
+      }
+      console.log(distributionList, "after adding prediction list");
       return distributionList;
+    
+      // const data2 = JSON.parse(predictionList.toString());
+      // console.log('data2', data2);
+
+      // const concatenatedData = { ...data1, ...data2 };
+
+      // const concatenatedJson = JSON.stringify(concatenatedData);
+      // console.log('Distribution List concatenated', concatenatedJson);
+      // return concatenatedJson;
     } catch (err) {
       console.log('ERROR IN GENERATING DISTRIBUTION LIST', err);
     }
