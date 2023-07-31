@@ -42,12 +42,12 @@ async function setup() {
   */
 
   // Get the task state
-  //console.log(await namespaceWrapper.getTaskState());
+  console.log(await namespaceWrapper.getTaskState());
 
   //GET ROUND
 
   const round = await namespaceWrapper.getRound();
-  console.log("ROUND", round);
+  console.log('ROUND', round);
 
   // Call to do the work for the task
 

@@ -9,6 +9,7 @@ const { object } = require('joi');
 class CoreLogic {
   stakePotAccount;
   async task() {
+    console.log('***************Task called***************');
     // Write the logic to do the work required for submitting the values and optionally store the result in levelDB
     const connection = new Connection(K2_NODE_URL);
     const round = await namespaceWrapper.getRound();
@@ -19,12 +20,11 @@ class CoreLogic {
     const roundedTime = Math.floor(currentTime / 300) * 300;
     console.log(roundedTime, 'roundedTime');
     // TODO: change the arguments from +300 to -300 after testing.
-    let transactionResult =
-      await fetchTransactions(
-        state.stake_pot_account,
-        roundedTime - 300,
-        roundedTime,
-      );
+    let transactionResult = await fetchTransactions(
+      state.stake_pot_account,
+      roundedTime - 300,
+      roundedTime + 300,
+    );
     const transactions = transactionResult[0];
     const openInterestLong = transactionResult[1];
     const openInterestShort = transactionResult[2];
@@ -32,9 +32,9 @@ class CoreLogic {
       roundedTime - 300,
       roundedTime,
     );
-    console.log(transactions, "when seen through core logic");
-    if(transactions == null || Object.keys(transactions).length == 0){
-      console.log("It went to null");
+    console.log(transactions, 'when seen through core logic');
+    if (transactions == null || Object.keys(transactions).length == 0) {
+      console.log('It went to null');
       return;
     }
     if (openingPrice == null || closingPrice == null) {
@@ -44,7 +44,11 @@ class CoreLogic {
         console.log(
           'Opening price is greater than Closing price --> shorts won!!',
         );
-        let profit_per_stake = openInterestLong / openInterestShort;
+        let profit_per_stake =
+          (openInterestLong * (1 - process.env.FEES)) / openInterestShort;
+        console.log('profit_per_stake', profit_per_stake);
+        const rewards = openInterestLong * process.env.FEES;
+        await namespaceWrapper.storeSet('rewards_' + round, rewards);
         let stakers = Object.keys(transactions);
         for (let i = 0; i < stakers.length; i++) {
           let staker = stakers[i];
@@ -60,8 +64,13 @@ class CoreLogic {
         console.log(
           'Closing price is greater than Opening price --> longs won!!',
         );
-        let profit_per_stake = openInterestShort / openInterestLong;
+        let profit_per_stake =
+          (openInterestShort * (1 - process.env.FEES)) / openInterestLong;
+        console.log('profit_per_stake', profit_per_stake);
+        const rewards = openInterestShort * process.env.FEES;
+        await namespaceWrapper.storeSet('rewards_' + round, rewards);
         let stakers = Object.keys(transactions);
+
         for (let i = 0; i < stakers.length; i++) {
           let staker = stakers[i];
           if (transactions[staker] > 0) {
@@ -91,26 +100,39 @@ class CoreLogic {
       }
 
       console.log('predictionPayouts', predictionPayouts);
-      await namespaceWrapper.storeSet(
-        'predictionPayouts_' + round,
-        predictionPayouts,
-      );
-    }
-    // Below is just a sample of work that a task can do
 
-    try {
-      const x = Math.random().toString(); // generate random number and convert to string
-      const cid = crypto.createHash('sha1').update(x).digest('hex'); // convert to CID
-      console.log('HASH:', cid);
-      // fetching round number to store work accordingly
+      if (
+        predictionPayouts != null &&
+        Object.keys(predictionPayouts).length > 0
+      ) {
+        await namespaceWrapper.storeSet(
+          'predictionPayouts_' + round,
+          predictionPayouts,
+        );
 
-      if (cid) {
-        await namespaceWrapper.storeSet('cid', cid); // store CID in levelDB
+        // Below is just a sample of work that a task can do
+
+        try {
+          //const x = Math.random().toString(); // generate random number and convert to string
+          const cid = crypto
+            .createHash('sha1')
+            .update(predictionPayouts)
+            .digest('hex'); // convert to CID
+          console.log('HASH:', cid);
+          // fetching round number to store work accordingly
+
+          if (cid) {
+            await namespaceWrapper.storeSet('cid', cid); // store CID in levelDB
+          }
+          return cid;
+        } catch (err) {
+          console.log('ERROR IN EXECUTING TASK', err);
+          return 'ERROR IN EXECUTING TASK' + err;
+        }
+      } else {
+        //NO USERS FOR THIS ROUND
+        await namespaceWrapper.storeSet('cid', 'NO USERS FOR THIS ROUND'); // store CID in levelDB
       }
-      return cid;
-    } catch (err) {
-      console.log('ERROR IN EXECUTING TASK', err);
-      return 'ERROR IN EXECUTING TASK' + err;
     }
   }
   async fetchSubmission() {
@@ -204,29 +226,42 @@ class CoreLogic {
       // now distribute the rewards based on the valid submissions
       // Here it is assumed that all the nodes doing valid submission gets the same reward
 
-      const reward =
-        taskAccountDataJSON.bounty_amount_per_round /
-        distributionCandidates.length;
+      // get the rewards from the task state
+
+      const round = await namespaceWrapper.getRound();
+      const expected_round = round - 2;
+      const nodeReward = await namespaceWrapper.storeGet(
+        'rewards_' + expected_round,
+      );
+      const reward = Math.floor(
+        (taskAccountDataJSON.bounty_amount_per_round +
+          (nodeReward ? nodeReward : 0)) /
+          distributionCandidates.length,
+      );
       console.log('REWARD RECEIVED BY EACH NODE', reward);
       for (let i = 0; i < distributionCandidates.length; i++) {
         distributionList[distributionCandidates[i]] = reward;
       }
-      console.log("before distribution list", distributionList);
+      console.log('before distribution list', distributionList);
       // const data1 = JSON.parse(distributionList.toString());
       // console.log('data1', data1);
-      const predictionList = await namespaceWrapper.storeGet('predictionPayouts_' + round);
-      console.log("prediction list", predictionList);
-      if(predictionList == null || Object.keys(predictionList).length === 0 ){
-        console.log("No prediction payouts found");
+      const predictionList = await namespaceWrapper.storeGet(
+        'predictionPayouts_' + round,
+      );
+      console.log('prediction list', predictionList);
+      if (predictionList == null || Object.keys(predictionList).length === 0) {
+        console.log('No prediction payouts found');
         return distributionList;
       }
       const keys = Object.keys(predictionList);
       for (let index = 0; index < keys.length; index++) {
-        distributionList[keys[index]] = predictionList[keys[index]] * LAMPORTS_PER_SOL + (distributionList[keys[index]] ? distributionList[keys[index]] : 0);
+        distributionList[keys[index]] =
+          predictionList[keys[index]] * LAMPORTS_PER_SOL +
+          (distributionList[keys[index]] ? distributionList[keys[index]] : 0);
       }
-      console.log(distributionList, "after adding prediction list");
+      console.log(distributionList, 'after adding prediction list');
       return distributionList;
-    
+
       // const data2 = JSON.parse(predictionList.toString());
       // console.log('data2', data2);
 
@@ -272,20 +307,43 @@ class CoreLogic {
     // try{
 
     console.log('Received submission_value', submission_value, round);
-    // const generatedValue = await namespaceWrapper.storeGet("cid");
-    // console.log("GENERATED VALUE", generatedValue);
-    // if(generatedValue == submission_value){
-    //   return true;
-    // }else{
-    //   return false;
-    // }
-    // }catch(err){
-    //   console.log("ERROR  IN VALDIATION", err);
-    //   return false;
-    // }
 
-    // For succesfull flow we return true for now
-    return true;
+    const expected_round = round - 1;
+
+    console.log('predictionPayouts', predictionPayouts);
+    const predictionPayouts = await namespaceWrapper.storeGet(
+      'predictionPayouts_' + expected_round,
+    );
+
+    if (
+      predictionPayouts == null ||
+      Object.keys(predictionPayouts).length === 0
+    ) {
+      console.log('No prediction payouts found');
+      return true;
+    }
+
+    // Below is just a sample of work that a task can do
+
+    try {
+      //const x = Math.random().toString(); // generate random number and convert to string
+      const cid = crypto
+        .createHash('sha1')
+        .update(predictionPayouts)
+        .digest('hex'); // convert to CID
+      console.log('GENERATED HASH', cid);
+      // fetching round number to store work accordingly
+
+      if (cid == submission_value) {
+        console.log('VALID SUBMISSION');
+        return true;
+      } else {
+        return false;
+      }
+    } catch (err) {
+      console.log('ERROR IN VALIDATING SUBMISSION', err);
+      return false;
+    }
   }
 
   async shallowEqual(object1, object2) {
@@ -354,12 +412,20 @@ class CoreLogic {
         await namespaceWrapper.getSlot(),
         'current slot while calling submit',
       );
-      const submission = await this.fetchSubmission();
-      console.log('SUBMISSION', submission);
-      await namespaceWrapper.checkSubmissionAndUpdateRound(
-        submission,
-        roundNumber,
-      );
+      let submission = await this.fetchSubmission();
+      if (submission == null) {
+        console.log('SUBMISSION', submission);
+        await namespaceWrapper.checkSubmissionAndUpdateRound(
+          'NO USERS FOR THIS ROUND',
+          roundNumber,
+        );
+      } else {
+        console.log('SUBMISSION', submission);
+        await namespaceWrapper.checkSubmissionAndUpdateRound(
+          submission,
+          roundNumber,
+        );
+      }
       console.log('after the submission call');
     } catch (error) {
       console.log('error in submission', error);

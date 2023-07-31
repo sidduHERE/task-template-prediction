@@ -13,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "@_koi/web3.js": "^0.0.6",
+    "@solana/web3.js": "^1.78.2",
     "axios": "^0.27.2",
     "body-parser": "^1.20.2",
     "dotenv": "^16.3.0",
