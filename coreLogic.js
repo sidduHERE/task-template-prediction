@@ -23,7 +23,7 @@ class CoreLogic {
     let transactionResult = await fetchTransactions(
       state.stake_pot_account,
       roundedTime - 300,
-      roundedTime + 300,
+      roundedTime + 1500,
     );
     const transactions = transactionResult[0];
     const openInterestLong = transactionResult[1];
@@ -46,7 +46,10 @@ class CoreLogic {
         );
         let profit_per_stake =
           (openInterestLong * (1 - process.env.FEES)) / openInterestShort;
+
         console.log('profit_per_stake', profit_per_stake);
+        if (openInterestLong == 0 || openInterestShort == 0)
+          profit_per_stake = 0;
         const rewards = openInterestLong * process.env.FEES;
         await namespaceWrapper.storeSet('rewards_' + round, rewards);
         let stakers = Object.keys(transactions);
@@ -67,6 +70,8 @@ class CoreLogic {
         let profit_per_stake =
           (openInterestShort * (1 - process.env.FEES)) / openInterestLong;
         console.log('profit_per_stake', profit_per_stake);
+        if (openInterestLong == 0 || openInterestShort == 0)
+          profit_per_stake = 0;
         const rewards = openInterestShort * process.env.FEES;
         await namespaceWrapper.storeSet('rewards_' + round, rewards);
         let stakers = Object.keys(transactions);
@@ -112,11 +117,13 @@ class CoreLogic {
 
         // Below is just a sample of work that a task can do
 
+        const strigifiedPayout = JSON.stringify(predictionPayouts);
+
         try {
           //const x = Math.random().toString(); // generate random number and convert to string
           const cid = crypto
             .createHash('sha1')
-            .update(predictionPayouts)
+            .update(strigifiedPayout)
             .digest('hex'); // convert to CID
           console.log('HASH:', cid);
           // fetching round number to store work accordingly
@@ -228,11 +235,11 @@ class CoreLogic {
 
       // get the rewards from the task state
 
-      const round = await namespaceWrapper.getRound();
-      const expected_round = round - 2;
-      const nodeReward = await namespaceWrapper.storeGet(
-        'rewards_' + expected_round,
-      );
+      //const round = await namespaceWrapper.getRound();
+      //const expected_round = round - 2;
+      const nodeReward =
+        LAMPORTS_PER_SOL *
+        (await namespaceWrapper.storeGet('rewards_' + round));
       const reward = Math.floor(
         (taskAccountDataJSON.bounty_amount_per_round +
           (nodeReward ? nodeReward : 0)) /
@@ -325,11 +332,13 @@ class CoreLogic {
 
     // Below is just a sample of work that a task can do
 
+    const strigifiedPayout = JSON.stringify(predictionPayouts);
+
     try {
       //const x = Math.random().toString(); // generate random number and convert to string
       const cid = crypto
         .createHash('sha1')
-        .update(predictionPayouts)
+        .update(strigifiedPayout)
         .digest('hex'); // convert to CID
       console.log('GENERATED HASH', cid);
       // fetching round number to store work accordingly
